@@ -3,65 +3,99 @@ import re
 import json
 import requests
 from typing import List, Dict
-from urllib.parse import urlparse
+
+VK_API_URL = "https://vk.com/api.php"
+VK_API_VERSION = "5.199"
+
+def call_vk_api(method: str, params: dict) -> dict:
+    """Call VK API method directly without token (for public data)."""
+    params['v'] = VK_API_VERSION
+    # Some endpoints work without token for public playlists
+    response = requests.get(VK_API_URL, params={'method': method, **params}, timeout=10)
+    if response.status_code != 200:
+        raise Exception(f"HTTP {response.status_code}")
+    data = response.json()
+    if 'error' in data:
+        raise Exception(f"VK API Error {data['error']['error_code']}: {data['error']['error_msg']}")
+    return data
 
 def get_playlist_tracks(playlist_url: str) -> List[Dict]:
-    print(f"[DEBUG] vk_resolver received URL: {playlist_url}")
+    print(f"[DEBUG] Parsing URL: {playlist_url}")
 
-    # Method 1: Extract using regex that looks for digits and optional alphanumeric key
-    # This handles:
-    #   /music/playlist/123_456_abc
-    #   /audio_playlist/123_456
-    #   /123_456_abc (just the ID part)
-    match = re.search(r'(?:music|audio)[/_]playlist[/](\d+)_(\d+)(?:_([a-f0-9]+))?', playlist_url)
+    # Extract IDs
+    match = re.search(r'(?:music|audio)[/_]playlist[/](\d+)_(\d+)(?:_([A-Za-z0-9]+))?', playlist_url)
     if not match:
-        # Fallback: just extract all digits and take first two
         digits = re.findall(r'\d+', playlist_url)
-        if len(digits) >= 2:
-            owner_id, playlist_id = digits[0], digits[1]
-            # Try to find access key after the second underscore
-            key_match = re.search(r'_\d+_([A-Za-z0-9]+)', playlist_url)
-            access_key = key_match.group(1) if key_match else ''
-            print(f"[DEBUG] Fallback extracted: owner={owner_id}, playlist={playlist_id}, key={access_key}")
-        else:
+        if len(digits) < 2:
             raise ValueError(f"Could not parse playlist URL: {playlist_url}")
+        owner_id = digits[0]
+        playlist_id = digits[1]
+        access_key = ''
     else:
         owner_id = match.group(1)
         playlist_id = match.group(2)
         access_key = match.group(3) if len(match.groups()) >= 3 and match.group(3) else ''
-        print(f"[DEBUG] Regex extracted: owner={owner_id}, playlist={playlist_id}, key={access_key}")
 
-    # Build the widget API URL
-    widget_url = f"https://vk.com/widget_audio.php?act=load_playlist&owner_id={owner_id}&playlist_id={playlist_id}"
-    if access_key:
-        widget_url += f"&access_key={access_key}"
-    print(f"[DEBUG] Widget URL: {widget_url}")
+    print(f"[DEBUG] owner={owner_id}, playlist={playlist_id}, key={access_key}")
 
+    # Step 1: Get playlist info (public)
     try:
-        response = requests.get(widget_url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        meta = call_vk_api('audio.getPlaylistById', {
+            'playlist_id': playlist_id,
+            'owner_id': owner_id,
+            'access_key': access_key,
+            'extra_fields': 'owner,duration'
         })
-        if response.status_code != 200:
-            print(f"[ERROR] HTTP {response.status_code}")
-            return []  # Return empty list on HTTP error
-
-        json_match = re.search(r'\{.*\}', response.text)
-        if not json_match:
-            print("[ERROR] No JSON data in response")
-            return []
-
-        data = json.loads(json_match.group(0))
-        tracks = data.get('playlist', {}).get('audios', [])
-        if not tracks:
-            print("[ERROR] No tracks found in playlist data")
-            return []
-
-        return [{
-            'artist': t.get('artist', 'Unknown'),
-            'title': t.get('title', 'Unknown'),
-            'duration': t.get('duration', 0)
-        } for t in tracks]
-
+        if not meta.get('playlist'):
+            raise Exception("Playlist not found or private")
+        print(f"[DEBUG] Playlist title: {meta['playlist']['title']}")
     except Exception as e:
-        print(f"[ERROR] Exception in get_playlist_tracks: {e}")
-        return []  # Return empty list on any error
+        print(f"[ERROR] Failed to get playlist info: {e}")
+        # Fallback: try without access_key
+        if access_key:
+            try:
+                meta = call_vk_api('audio.getPlaylistById', {
+                    'playlist_id': playlist_id,
+                    'owner_id': owner_id,
+                    'extra_fields': 'owner,duration'
+                })
+                if meta.get('playlist'):
+                    access_key = ''  # It worked without key
+                    print("[DEBUG] Access key not needed")
+            except:
+                pass
+        else:
+            raise
+
+    # Step 2: Get audio IDs from playlist source
+    source_entity = f"{owner_id}_{playlist_id}{'_' + access_key if access_key else ''}"
+    ids_data = call_vk_api('audio.getAudioIdsBySource', {
+        'source': 'playlist',
+        'entity_id': source_entity
+    })
+    audio_ids = ids_data.get('audios', [])
+    if not audio_ids:
+        raise Exception("No tracks found in playlist")
+
+    print(f"[DEBUG] Found {len(audio_ids)} audio IDs")
+
+    # Step 3: Fetch full track details in batches
+    all_tracks = []
+    chunk_size = 100
+    for i in range(0, len(audio_ids), chunk_size):
+        chunk = audio_ids[i:i+chunk_size]
+        ids = ','.join(str(t.get('audio_id', t) if isinstance(t, dict) else t) for t in chunk)
+        track_data = call_vk_api('audio.getById', {'audios': ids})
+        if isinstance(track_data, list):
+            for t in track_data:
+                all_tracks.append({
+                    'artist': t.get('artist', 'Unknown'),
+                    'title': t.get('title', 'Unknown'),
+                    'duration': t.get('duration', 0)
+                })
+
+    if not all_tracks:
+        raise Exception("No track details retrieved")
+
+    print(f"[DEBUG] Extracted {len(all_tracks)} tracks")
+    return all_tracks

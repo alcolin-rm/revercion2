@@ -8,6 +8,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional
+from vk_extractor import extract_playlist_with_puppeteer
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -374,20 +375,18 @@ async def index():
 
 @app.post("/api/fetch-playlist")
 async def fetch_playlist(playlist_url: str = Form(...)):
-    print(f"[API] Received URL: '{playlist_url}'")  # <-- ADD THIS
     try:
-        tracks = extract_vk_playlist_no_auth(playlist_url)
+        import asyncio
+        # Run the blocking subprocess in a thread to avoid blocking the event loop
+        result = await asyncio.to_thread(extract_playlist_with_puppeteer, playlist_url)
         return JSONResponse({
             "success": True,
-            "tracks": tracks,
-            "total": len(tracks)
+            "tracks": result['tracks'],
+            "total": result['total']
         })
     except Exception as e:
-        return JSONResponse({
-            "success": False,
-            "error": str(e)
-        }, status_code=400)
-
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+    
 @app.post("/api/download-playlist")
 async def download_playlist(
     background_tasks: BackgroundTasks,
@@ -431,6 +430,21 @@ async def download_playlist(
 @app.get("/api/jobs")
 async def get_jobs():
     return JSONResponse({"jobs": jobs})
+
+@app.get("/api/test-widget")
+async def test_widget():
+    owner_id = 474267430
+    playlist_id = 44
+    access_key = "856139ef33dd22b726"
+    widget_url = f"https://vk.com/widget_audio.php?act=load_playlist&owner_id={owner_id}&playlist_id={playlist_id}&access_key={access_key}"
+    try:
+        r = requests.get(widget_url, timeout=10)
+        json_match = re.search(r'\{.*\}', r.text)
+        data = json.loads(json_match.group(0)) if json_match else {}
+        tracks = data.get('playlist', {}).get('audios', [])
+        return {"status": r.status_code, "track_count": len(tracks), "sample": tracks[:2] if tracks else []}
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/api/test/connection")
 async def test_connection():
