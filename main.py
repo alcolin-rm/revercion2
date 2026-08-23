@@ -201,7 +201,7 @@ def extract_vk_playlist_no_auth(playlist_url: str) -> List[Dict]:
 
 
     # Fallback: direct widget API
-    match = re.search(r'(?:music|audio)_playlist[/](\d+)_(\d+)(?:_([a-f0-9]+))?', playlist_url)
+    match = re.search(r'(?:music|audio)[/_]playlist[/](\d+)_(\d+)(?:_([a-f0-9]+))?', playlist_url)
     if not match:
         raise ValueError("Could not parse playlist URL")
 
@@ -374,6 +374,7 @@ async def index():
 
 @app.post("/api/fetch-playlist")
 async def fetch_playlist(playlist_url: str = Form(...)):
+    print(f"[API] Received URL: '{playlist_url}'")  # <-- ADD THIS
     try:
         tracks = extract_vk_playlist_no_auth(playlist_url)
         return JSONResponse({
@@ -483,6 +484,14 @@ async def cancel_job(job_id: str):
         jobs[job_id]["message"] = "Cancelled by user"
         return JSONResponse({"status": "cancelled"})
     raise HTTPException(status_code=404, detail="Job not found")
+
+@app.get("/api/test-vk-resolver")
+async def test_vk_resolver():
+    try:
+        from vk_resolver import get_playlist_tracks
+        return {"status": "ok", "message": "vk_resolver loaded"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 # ──────────────────────────────────────────────────────────────
 # Startup / Shutdown

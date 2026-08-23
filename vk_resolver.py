@@ -3,44 +3,39 @@ import re
 import json
 import requests
 from typing import List, Dict
+from urllib.parse import urlparse
 
 def get_playlist_tracks(playlist_url: str) -> List[Dict]:
-    """
-    Extract tracks from a public VK playlist using VK's widget API.
-    Returns a list of dicts with keys: artist, title, duration.
-    Returns empty list if no tracks found or playlist is private.
-    """
-    print(f"[DEBUG] Parsing URL: {playlist_url}")
+    print(f"[DEBUG] vk_resolver received URL: {playlist_url}")
 
-    # Try several regex patterns to extract owner_id, playlist_id, and access_key
-    patterns = [
-        # Format: music/playlist/123_456_abc
-        r'(?:music|audio)[/_]playlist[/](\d+)_(\d+)(?:_([A-Za-z0-9]+))?',
-        # Format: audio_playlist/123_456
-        r'(?:audio|music)[/_]playlist[/](\d+)_(\d+)(?:_([A-Za-z0-9]+))?',
-        # Fallback: any digits_underscore_digits_underscore_alnum
-        r'(\d+)_(\d+)(?:_([A-Za-z0-9]+))?'
-    ]
-
-    match = None
-    for pattern in patterns:
-        match = re.search(pattern, playlist_url)
-        if match:
-            break
-
+    # Method 1: Extract using regex that looks for digits and optional alphanumeric key
+    # This handles:
+    #   /music/playlist/123_456_abc
+    #   /audio_playlist/123_456
+    #   /123_456_abc (just the ID part)
+    match = re.search(r'(?:music|audio)[/_]playlist[/](\d+)_(\d+)(?:_([a-f0-9]+))?', playlist_url)
     if not match:
-        raise ValueError(f"Could not parse playlist URL: {playlist_url}")
-
-    owner_id = match.group(1)
-    playlist_id = match.group(2)
-    access_key = match.group(3) if len(match.groups()) >= 3 else ''
-
-    print(f"[DEBUG] Extracted: owner={owner_id}, playlist={playlist_id}, key={access_key}")
+        # Fallback: just extract all digits and take first two
+        digits = re.findall(r'\d+', playlist_url)
+        if len(digits) >= 2:
+            owner_id, playlist_id = digits[0], digits[1]
+            # Try to find access key after the second underscore
+            key_match = re.search(r'_\d+_([A-Za-z0-9]+)', playlist_url)
+            access_key = key_match.group(1) if key_match else ''
+            print(f"[DEBUG] Fallback extracted: owner={owner_id}, playlist={playlist_id}, key={access_key}")
+        else:
+            raise ValueError(f"Could not parse playlist URL: {playlist_url}")
+    else:
+        owner_id = match.group(1)
+        playlist_id = match.group(2)
+        access_key = match.group(3) if len(match.groups()) >= 3 and match.group(3) else ''
+        print(f"[DEBUG] Regex extracted: owner={owner_id}, playlist={playlist_id}, key={access_key}")
 
     # Build the widget API URL
     widget_url = f"https://vk.com/widget_audio.php?act=load_playlist&owner_id={owner_id}&playlist_id={playlist_id}"
     if access_key:
         widget_url += f"&access_key={access_key}"
+    print(f"[DEBUG] Widget URL: {widget_url}")
 
     try:
         response = requests.get(widget_url, timeout=10, headers={
@@ -48,7 +43,7 @@ def get_playlist_tracks(playlist_url: str) -> List[Dict]:
         })
         if response.status_code != 200:
             print(f"[ERROR] HTTP {response.status_code}")
-            return []  # Return empty list instead of raising
+            return []  # Return empty list on HTTP error
 
         json_match = re.search(r'\{.*\}', response.text)
         if not json_match:
@@ -56,14 +51,9 @@ def get_playlist_tracks(playlist_url: str) -> List[Dict]:
             return []
 
         data = json.loads(json_match.group(0))
-        playlist_data = data.get('playlist')
-        if not playlist_data:
-            print("[ERROR] No 'playlist' key in data")
-            return []
-
-        tracks = playlist_data.get('audios')
-        if not tracks or not isinstance(tracks, list):
-            print("[ERROR] No 'audios' list in playlist data")
+        tracks = data.get('playlist', {}).get('audios', [])
+        if not tracks:
+            print("[ERROR] No tracks found in playlist data")
             return []
 
         return [{
