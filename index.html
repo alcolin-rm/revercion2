@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Revercion2 – VK Playlist Downloader</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0a0f; color: #d0d0d0; font-family: 'Segoe UI', sans-serif; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { color: #00ff88; border-bottom: 2px solid #00ff88; padding-bottom: 10px; margin-bottom: 20px; }
+        .card { background: #14141e; border: 1px solid #2a2a3a; border-radius: 10px; padding: 25px; margin-bottom: 20px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; color: #88aacc; }
+        .form-group input, .form-group select { width: 100%; padding: 10px; background: #1a1a2e; border: 1px solid #2a2a4a; color: #d0d0d0; border-radius: 6px; }
+        .btn { background: #00ff88; color: #0a0a0f; border: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+        .btn:hover { background: #00cc66; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-secondary { background: #334466; color: #aaccff; }
+        .btn-secondary:hover { background: #445577; }
+        .flex { display: flex; gap: 10px; flex-wrap: wrap; }
+        .flex > * { flex: 1; min-width: 120px; }
+        .status { padding: 12px; border-radius: 6px; margin: 10px 0; }
+        .status.success { background: #0a2a1a; border: 1px solid #00ff88; color: #00ff88; }
+        .status.error { background: #2a1a1a; border: 1px solid #ff4466; color: #ff4466; }
+        .status.info { background: #1a1a2a; border: 1px solid #44aaff; color: #44aaff; }
+        .status.loading { background: #1a1a2a; border: 1px solid #ffaa00; color: #ffaa00; }
+        .track-list { max-height: 400px; overflow-y: auto; background: #1a1a2e; padding: 15px; border-radius: 6px; margin: 10px 0; }
+        .track-item { padding: 8px; border-bottom: 1px solid #2a2a4a; display: flex; justify-content: space-between; align-items: center; }
+        .track-item:last-child { border-bottom: none; }
+        .track-item .num { color: #445566; font-size: 0.8em; margin-right: 10px; min-width: 40px; }
+        .track-item .artist { color: #88ccff; }
+        .track-item .title { color: #d0d0d0; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 10px 0; }
+        .stat-box { background: #1a1a2e; padding: 12px; border-radius: 6px; text-align: center; border: 1px solid #2a2a4a; }
+        .stat-number { font-size: 1.5em; color: #00ff88; font-weight: bold; }
+        .stat-label { color: #8899aa; font-size: 0.75em; text-transform: uppercase; }
+        .job-item { background: #1a1a2e; padding: 12px; margin-bottom: 8px; border-radius: 6px; border-left: 3px solid #ffaa00; }
+        .job-item.complete { border-left-color: #00ff88; }
+        .job-item.error { border-left-color: #ff4466; }
+        .job-item.cancelled { border-left-color: #ffaa00; }
+        .progress-bar { height: 4px; background: #2a2a4a; border-radius: 2px; margin-top: 6px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #00ff88; transition: width 0.5s; }
+        .help-text { color: #6688aa; font-size: 0.85em; margin-top: 5px; }
+        .file-item { padding: 6px 0; border-bottom: 1px solid #2a2a4a; display: flex; justify-content: space-between; }
+        .file-item a { color: #88ccff; text-decoration: none; }
+        .file-item a:hover { text-decoration: underline; }
+        .file-size { color: #8899aa; font-size: 0.85em; }
+        .mt-10 { margin-top: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🎵 Revercion2 – VK Playlist Downloader</h1>
+
+    <div class="card">
+        <h2>📥 Enter VK Playlist URL</h2>
+        <div class="help-text">
+            Works with <strong>public</strong> VK playlists.<br>
+            Example: <code>https://vk.ru/music/playlist/474267430_44_856139ef33dd22b726</code>
+        </div>
+        <div class="form-group" style="margin-top:15px;">
+            <input type="text" id="playlistUrl" placeholder="Paste VK playlist URL..." value="https://vk.ru/music/playlist/474267430_44_856139ef33dd22b726">
+        </div>
+        <div class="flex">
+            <div class="form-group">
+                <label for="quality">Quality</label>
+                <select id="quality">
+                    <option value="128">128 kbps</option>
+                    <option value="192">192 kbps</option>
+                    <option value="256">256 kbps</option>
+                    <option value="320" selected>320 kbps</option>
+                    <option value="lossless">Lossless</option>
+                </select>
+            </div>
+            <div class="form-group" style="display:flex; align-items:flex-end; gap:10px;">
+                <button class="btn" id="fetchBtn" onclick="fetchPlaylist()">📋 Get Tracks</button>
+                <button class="btn" id="downloadBtn" onclick="downloadPlaylist()" disabled>⬇️ Download All</button>
+            </div>
+        </div>
+        <div id="status"></div>
+        <div id="trackList" class="track-list" style="display:none;"></div>
+        <div id="trackCount" class="help-text" style="display:none;"></div>
+    </div>
+
+    <div class="card" id="jobsCard">
+        <h2>📊 Active Jobs</h2>
+        <div id="jobsList"><div style="color:#8899aa;">No active jobs</div></div>
+    </div>
+
+    <div class="card">
+        <h2>📁 Downloaded Files</h2>
+        <div id="downloadsList"><div style="color:#8899aa;">No files downloaded yet</div></div>
+    </div>
+
+    <div class="card">
+        <h2>📜 History</h2>
+        <div id="historyList"><div style="color:#8899aa;">No history</div></div>
+    </div>
+</div>
+
+<script>
+// ──────────────────────────────────────────────────────────────
+// State
+// ──────────────────────────────────────────────────────────────
+let currentTracks = [];
+let fetchBtn = document.getElementById('fetchBtn');
+let downloadBtn = document.getElementById('downloadBtn');
+let refreshInterval = null;
+
+// ──────────────────────────────────────────────────────────────
+// UI Helpers
+// ──────────────────────────────────────────────────────────────
+function setStatus(msg, type='info') {
+    const el = document.getElementById('status');
+    el.className = 'status ' + type;
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
+function showTracks(tracks) {
+    const container = document.getElementById('trackList');
+    const count = document.getElementById('trackCount');
+    if (!tracks || tracks.length === 0) {
+        container.style.display = 'none';
+        count.style.display = 'none';
+        return;
+    }
+    container.style.display = 'block';
+    count.style.display = 'block';
+    count.textContent = `📋 ${tracks.length} tracks found`;
+    container.innerHTML = tracks.map((t, i) =>
+        `<div class="track-item">
+            <span><span class="num">${i+1}.</span> <span class="artist">${escapeHtml(t.artist)}</span> — <span class="title">${escapeHtml(t.title)}</span></span>
+            <span style="color:#8899aa;font-size:0.8em;">${t.duration || ''}</span>
+        </div>`
+    ).join('');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ──────────────────────────────────────────────────────────────
+// API Calls
+// ──────────────────────────────────────────────────────────────
+// Replace the fetchPlaylist function with this version that shows the error
+async function fetchPlaylist() {
+    const url = document.getElementById('playlistUrl').value.trim();
+    if (!url) { setStatus('❌ Enter a URL', 'error'); return; }
+
+    fetchBtn.disabled = true;
+    fetchBtn.textContent = '⏳ Fetching...';
+    setStatus('⏳ Fetching playlist...', 'loading');
+
+    try {
+        const formData = new FormData();
+        formData.append('playlist_url', url);
+        const response = await fetch('/api/fetch-playlist', { method: 'POST', body: formData });
+        
+        // Read the response body even if it's an error
+        const text = await response.text();
+        console.log('Response status:', response.status);
+        console.log('Response body:', text);
+        
+        if (!response.ok) {
+            // Try to parse as JSON, but fallback to text
+            try {
+                const data = JSON.parse(text);
+                setStatus(`❌ ${data.error || data.detail || 'Server error'}`, 'error');
+            } catch {
+                setStatus(`❌ Server error: ${text}`, 'error');
+            }
+            showTracks(null);
+            downloadBtn.disabled = true;
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = '📋 Get Tracks';
+            return;
+        }
+        
+        const data = JSON.parse(text);
+        if (data.success) {
+            currentTracks = data.tracks;
+            setStatus(`✅ Found ${data.total} tracks!`, 'success');
+            showTracks(currentTracks);
+            downloadBtn.disabled = false;
+        } else {
+            setStatus(`❌ ${data.error}`, 'error');
+            showTracks(null);
+            downloadBtn.disabled = true;
+        }
+    } catch (e) {
+        setStatus(`❌ Error: ${e.message}`, 'error');
+        console.error('Fetch error:', e);
+    }
+
+    fetchBtn.disabled = false;
+    fetchBtn.textContent = '📋 Get Tracks';
+}
+
+async function downloadPlaylist() {
+    if (!currentTracks.length) {
+        setStatus('❌ Fetch tracks first!', 'error');
+        return;
+    }
+
+    const url = document.getElementById('playlistUrl').value.trim();
+    const quality = document.getElementById('quality').value;
+
+    downloadBtn.disabled = true;
+    downloadBtn.textContent = '⏳ Starting...';
+    setStatus(`⏳ Starting download of ${currentTracks.length} tracks...`, 'loading');
+
+    try {
+        const formData = new FormData();
+        formData.append('playlist_url', url);
+        formData.append('quality', quality);
+        const response = await fetch('/api/download-playlist', { method: 'POST', body: formData });
+        const data = await response.json();
+
+        if (data.success) {
+            setStatus(`✅ Download started! Job: ${data.job_id}`, 'success');
+            fetchJobs();
+        } else {
+            setStatus(`❌ ${data.detail || 'Download failed'}`, 'error');
+        }
+    } catch (e) {
+        setStatus(`❌ Error: ${e.message}`, 'error');
+    }
+
+    downloadBtn.disabled = false;
+    downloadBtn.textContent = '⬇️ Download All';
+}
+
+// ──────────────────────────────────────────────────────────────
+// Polling for Jobs, Downloads, History
+// ──────────────────────────────────────────────────────────────
+async function fetchJobs() {
+    try {
+        const res = await fetch('/api/jobs');
+        const data = await res.json();
+        const jobs = data.jobs || {};
+        const container = document.getElementById('jobsList');
+        const entries = Object.values(jobs);
+        if (!entries.length) {
+            container.innerHTML = '<div style="color:#8899aa;">No active jobs</div>';
+            return;
+        }
+        container.innerHTML = entries.map(job => {
+            const progress = (job.progress || 0) * 100;
+            const statusMap = {
+                'starting': '⏳ Starting',
+                'searching': '🔍 Searching Soulseek',
+                'downloading': '⬇️ Downloading',
+                'complete': '✅ Done',
+                'error': '❌ Error',
+                'cancelled': '⛔ Cancelled'
+            };
+            return `
+                <div class="job-item ${job.status}">
+                    <div><strong>${job.id}</strong> ${job.message || ''}</div>
+                    <div style="font-size:0.85em;color:#8899aa;">${statusMap[job.status] || job.status}</div>
+                    <div class="progress-bar"><div class="progress-fill" style="width:${progress}%;"></div></div>
+                </div>
+            `;
+        }).join('');
+    } catch(e) { /* ignore */ }
+}
+
+async function fetchDownloads() {
+    try {
+        const res = await fetch('/downloads');
+        const data = await res.json();
+        const files = data.files || [];
+        const container = document.getElementById('downloadsList');
+        if (!files.length) {
+            container.innerHTML = '<div style="color:#8899aa;">No files downloaded yet</div>';
+            return;
+        }
+        container.innerHTML = files.slice(0, 50).map(f =>
+            `<div class="file-item">
+                <a href="${f.url}">${f.name}</a>
+                <span class="file-size">${(f.size/1024/1024).toFixed(1)} MB</span>
+            </div>`
+        ).join('');
+    } catch(e) { /* ignore */ }
+}
+
+async function fetchHistory() {
+    try {
+        const res = await fetch('/api/history?limit=50');
+        const data = await res.json();
+        const history = data.history || [];
+        const container = document.getElementById('historyList');
+        if (!history.length) {
+            container.innerHTML = '<div style="color:#8899aa;">No history</div>';
+            return;
+        }
+        container.innerHTML = history.map(entry =>
+            `<div style="padding:4px 0; border-bottom:1px solid #2a2a4a; font-size:0.9em;">
+                <span style="color:#88ccff;">${entry.artist}</span> — ${entry.title}
+                <span style="color:#8899aa;font-size:0.8em;margin-left:10px;">${entry.bitrate || '?'}kbps</span>
+            </div>`
+        ).join('');
+    } catch(e) { /* ignore */ }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Auto-refresh
+// ──────────────────────────────────────────────────────────────
+function startPolling() {
+    if (refreshInterval) clearInterval(refreshInterval);
+    refreshInterval = setInterval(() => {
+        fetchJobs();
+        fetchDownloads();
+        fetchHistory();
+    }, 3000);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Init
+// ──────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    startPolling();
+    fetchJobs();
+    fetchDownloads();
+    fetchHistory();
+    // Pre-fetch the example playlist automatically?
+    // Optionally, you can call fetchPlaylist() here, but better to let user click.
+});
+
+window.addEventListener('beforeunload', () => {
+    if (refreshInterval) clearInterval(refreshInterval);
+});
+</script>
+</body>
+</html>

@@ -19,10 +19,8 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-        extra = "ignore"   # <-- IMPORTANT: ignore extra fields in .env
+        extra = "ignore"   # <-- IMPORTANT
 
 settings = Settings()
-
-# Create directories
 settings.data_dir.mkdir(exist_ok=True)
 settings.downloads_dir.mkdir(exist_ok=True)

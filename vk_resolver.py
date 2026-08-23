@@ -1,99 +1,77 @@
+# vk_resolver.py
 import re
-import httpx
-from typing import List, Dict, Any, Optional
-from config import settings
+import json
+import requests
+from typing import List, Dict
 
-VK_AL_AUDIO = "https://vk.com/al_audio.php"
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0 Safari/537.36"
-    ),
-    "Referer": "https://vk.com/",
-}
+def get_playlist_tracks(playlist_url: str) -> List[Dict]:
+    """
+    Extract tracks from a public VK playlist using VK's widget API.
+    Returns a list of dicts with keys: artist, title, duration.
+    Returns empty list if no tracks found or playlist is private.
+    """
+    print(f"[DEBUG] Parsing URL: {playlist_url}")
 
-PLAYLIST_URL_RE = re.compile(
-    r"vk\.com/audios?(?P<owner_id>-?\d+).*?"
-    r"audio_playlist(?P<owner_id2>-?\d+)_(?P<playlist_id>\d+)"
-)
+    # Try several regex patterns to extract owner_id, playlist_id, and access_key
+    patterns = [
+        # Format: music/playlist/123_456_abc
+        r'(?:music|audio)[/_]playlist[/](\d+)_(\d+)(?:_([A-Za-z0-9]+))?',
+        # Format: audio_playlist/123_456
+        r'(?:audio|music)[/_]playlist[/](\d+)_(\d+)(?:_([A-Za-z0-9]+))?',
+        # Fallback: any digits_underscore_digits_underscore_alnum
+        r'(\d+)_(\d+)(?:_([A-Za-z0-9]+))?'
+    ]
 
-def parse_playlist_url(url: str) -> tuple[str, str]:
-    m = PLAYLIST_URL_RE.search(url)
-    if not m:
-        raise ValueError("Invalid VK playlist URL")
-    if m.group("owner_id") != m.group("owner_id2"):
-        raise ValueError("Owner ID mismatch in playlist URL")
-    return m.group("owner_id"), m.group("playlist_id")
+    match = None
+    for pattern in patterns:
+        match = re.search(pattern, playlist_url)
+        if match:
+            break
 
-async def fetch_playlist_tracks(playlist_url: str) -> Dict[str, Any]:
-    owner_id, playlist_id = parse_playlist_url(playlist_url)
-    section_arg = f"playlist{owner_id}_{playlist_id}"
+    if not match:
+        raise ValueError(f"Could not parse playlist URL: {playlist_url}")
 
-    async with httpx.AsyncClient(timeout=settings.vk_timeout_sec) as client:
-        resp = await client.post(
-            VK_AL_AUDIO,
-            headers=HEADERS,
-            data={
-                "act": "load_section",
-                "al": "1",
-                "section": section_arg,
-            },
-        )
-        resp.raise_for_status()
+    owner_id = match.group(1)
+    playlist_id = match.group(2)
+    access_key = match.group(3) if len(match.groups()) >= 3 else ''
 
-    # VK returns a JSON array; the last element usually contains the playlist data.
-    # Exact structure can vary; we’ll be defensive.
-    data = resp.json()
-    if not isinstance(data, list):
-        raise ValueError("Unexpected VK response format (not a list)")
+    print(f"[DEBUG] Extracted: owner={owner_id}, playlist={playlist_id}, key={access_key}")
 
-    # Heuristic: find the part that contains 'playlist' or 'list' with tracks.
-    # In many cases, data[-1] is a dict with 'playlist' or similar.
-    payload = None
-    for chunk in reversed(data):
-        if isinstance(chunk, dict):
-            if "playlist" in chunk or "list" in chunk or "audio" in chunk:
-                payload = chunk
-                break
-    if payload is None:
-        # Fallback: assume last element holds something useful
-        payload = data[-1] if isinstance(data[-1], dict) else {}
+    # Build the widget API URL
+    widget_url = f"https://vk.com/widget_audio.php?act=load_playlist&owner_id={owner_id}&playlist_id={playlist_id}"
+    if access_key:
+        widget_url += f"&access_key={access_key}"
 
-    # Extract title
-    title = payload.get("title", "") or payload.get("playlist", {}).get("title", "") or f"Playlist {owner_id}_{playlist_id}"
-
-    # Extract tracks – structure differs; often under 'playlist' -> 'tracks' or 'list'
-    raw_tracks = (
-        payload.get("playlist", {}).get("tracks", [])
-        or payload.get("list", [])
-        or payload.get("audio", [])
-        or []
-    )
-
-    tracks: List[Dict[str, Any]] = []
-    for t in raw_tracks:
-        if not isinstance(t, dict):
-            continue
-        artist = t.get("artist", "") or t.get("performer", "") or ""
-        title_track = t.get("title", "") or t.get("track", "") or ""
-        album = t.get("album", "") or ""
-        duration = t.get("duration", 0) or t.get("duration_sec", 0) or 0
-
-        if not artist and not title_track:
-            continue
-
-        query = f"{artist} - {title_track}".strip()
-        tracks.append({
-            "artist": artist,
-            "title": title_track,
-            "album": album,
-            "duration_sec": int(duration),
-            "query": query,
+    try:
+        response = requests.get(widget_url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
+        if response.status_code != 200:
+            print(f"[ERROR] HTTP {response.status_code}")
+            return []  # Return empty list instead of raising
 
-    return {
-        "playlist_id": f"{owner_id}_{playlist_id}",
-        "title": title,
-        "tracks": tracks,
-    }
+        json_match = re.search(r'\{.*\}', response.text)
+        if not json_match:
+            print("[ERROR] No JSON data in response")
+            return []
+
+        data = json.loads(json_match.group(0))
+        playlist_data = data.get('playlist')
+        if not playlist_data:
+            print("[ERROR] No 'playlist' key in data")
+            return []
+
+        tracks = playlist_data.get('audios')
+        if not tracks or not isinstance(tracks, list):
+            print("[ERROR] No 'audios' list in playlist data")
+            return []
+
+        return [{
+            'artist': t.get('artist', 'Unknown'),
+            'title': t.get('title', 'Unknown'),
+            'duration': t.get('duration', 0)
+        } for t in tracks]
+
+    except Exception as e:
+        print(f"[ERROR] Exception in get_playlist_tracks: {e}")
+        return []  # Return empty list on any error
